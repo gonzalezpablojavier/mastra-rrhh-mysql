@@ -13,7 +13,8 @@ export const mastra = new Mastra({
   agents: { sqlAgent },
   storage: new LibSQLStore({
     id: 'mastra-storage',
-    url: 'file:./mastra.db',
+    url: process.env.LIBSQL_URL ?? 'file:./mastra.db',
+    ...(process.env.LIBSQL_AUTH_TOKEN ? { authToken: process.env.LIBSQL_AUTH_TOKEN } : {}),
   }),
   logger: new PinoLogger({
     name: 'Mastra Text-to-SQL',

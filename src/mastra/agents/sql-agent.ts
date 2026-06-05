@@ -129,7 +129,10 @@ Debes verificar si en la conversación o en el mensaje se proporciona el bloque 
 `,
   tools: { introspectDatabase, executeSql },
   defaultOptions: {
-    maxTokens: 1500,
+    modelSettings: {
+      maxOutputTokens: 1500,
+    },
+    maxSteps: 5,
   },
   memory: new Memory(),
 });

@@ -1,4 +1,4 @@
-# Guía de Acceso a la API de Mastra (HR SQL Agent)
+# Guía de Acceso a la API de Mastra (ROMA IA)
 
 Esta guía explica cómo interactuar con el agente `hr-sql-agent` a través de la API HTTP que expone automáticamente el servidor de Mastra en desarrollo o producción.
 

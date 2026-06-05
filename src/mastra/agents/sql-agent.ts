@@ -57,7 +57,7 @@ const defaultModel = wrapModelWithTokenLimit(rawModel, 1500);
 
 export const sqlAgent = new Agent({
   id: 'hr-sql-agent',
-  name: 'HR SQL Agent',
+  name: 'ROMA IA',
   model: defaultModel,
   instructions: `
 You are an expert HR assistant that helps users query a MySQL database containing human resources data (employees, attendance, payroll, shifts, etc.) using natural language.

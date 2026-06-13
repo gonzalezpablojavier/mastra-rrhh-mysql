@@ -11,6 +11,11 @@ import {
 import { sqlAgent } from './agents/sql-agent';
 import { logger } from './logger';
 import { libsqlUrl, libsqlAuthToken } from './libsql-config';
+import { probeLibsql } from './storage-probe';
+
+// Diagnóstico temporal: al hacer cold-start, comprueba la conectividad real a
+// Turso y loguea la causa raíz de red si falla (ver storage-probe.ts).
+void probeLibsql();
 
 export const mastra = new Mastra({
   agents: { sqlAgent },

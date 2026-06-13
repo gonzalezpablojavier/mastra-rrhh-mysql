@@ -19,6 +19,7 @@
   "dependencies": {
     "@ai-sdk/openai": "^3.0.67",
     "@mastra/core": "latest",
+    "@mastra/deployer-vercel": "^1.1.37",
     "@mastra/libsql": "latest",
     "@mastra/loggers": "latest",
     "@mastra/memory": "latest",

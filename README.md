@@ -69,6 +69,23 @@ El contexto del usuario (`empresaId`, `colaboradorID`, `rol`, `area`) viaja **fu
 | `pnpm start` | Arranca el build. |
 | `pnpm typecheck` | Verificación de tipos con `tsc`. |
 
+## Deploy en Vercel
+
+El proyecto usa `VercelDeployer` ([index.ts](src/mastra/index.ts)): `mastra build` genera `.vercel/output` (Build Output API v3) con la función serverless y el routing.
+
+En el dashboard de Vercel configurá:
+
+| Setting | Valor |
+|---|---|
+| Build Command | `npm run build` (ejecuta `mastra build`) |
+| Output Directory | `.vercel/output` |
+| Framework Preset | Other / None (usa Build Output API) |
+| Environment Variables | `OPENAI_API_KEY`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_DATABASE`, `AGENT_MODEL_ID`, **`LIBSQL_URL`** y **`LIBSQL_AUTH_TOKEN`** (Turso) |
+
+> ⚠️ **Storage en serverless**: el filesystem de Vercel no persiste, así que `LIBSQL_URL=file:...` no sirve. Usá **Turso** (libsql remoto) para que memoria, trazas y el vector store de RAG funcionen. MySQL (RDS) ya es remoto y solo necesita sus variables.
+
+La función tiene `maxDuration: 60s` (el agente encadena varios pasos de tools).
+
 ## Seguridad
 
 El aislamiento multi-empresa y el control por rol se aplican en [`execute-sql.ts`](src/mastra/tools/execute-sql.ts) como capa determinista de defensa-en-profundidad (rechaza consultas que referencien otra empresa u otro colaborador). Para una garantía más fuerte en producción, se recomienda además usar **credenciales/vistas de MySQL por empresa** y que las cabeceras de contexto provengan de un **JWT verificado** en el backend, nunca directamente del cliente.

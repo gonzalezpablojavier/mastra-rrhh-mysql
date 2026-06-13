@@ -1,5 +1,6 @@
 import { Mastra } from '@mastra/core/mastra';
 import { LibSQLStore } from '@mastra/libsql';
+import { VercelDeployer } from '@mastra/deployer-vercel';
 import { MASTRA_RESOURCE_ID_KEY } from '@mastra/core/request-context';
 import {
   Observability,
@@ -18,6 +19,10 @@ export const mastra = new Mastra({
     ...(process.env.LIBSQL_AUTH_TOKEN ? { authToken: process.env.LIBSQL_AUTH_TOKEN } : {}),
   }),
   logger,
+  // Deployer de Vercel: hace que `mastra build` genere la estructura serverless
+  // que Vercel entiende (función + vercel.json). maxDuration alto porque el agente
+  // encadena varios pasos de tools (introspección + SQL + redacción).
+  deployer: new VercelDeployer({ maxDuration: 60 }),
   server: {
     /**
      * Middleware que traslada el contexto del usuario desde cabeceras HTTP de

@@ -1,50 +1,50 @@
-# Chat with Database
+# ROMA IA — Asistente conversacional de RRHH (text-to-SQL)
 
-A Mastra template that lets you query a local SQLite database using natural language. An AI agent introspects the schema, converts your questions to SQL, and executes the queries. Built with [Mastra](https://mastra.ai).
+Agente de Recursos Humanos construido con [Mastra](https://mastra.ai) que responde preguntas en lenguaje natural sobre una base de datos **MySQL** de RRHH (colaboradores, presentismo, vacaciones, asistencia, clima laboral, FAQ). El agente introspecciona el esquema, traduce la pregunta a SQL `SELECT` y presenta los resultados de forma cálida y humana en español.
 
-## Why we built this
+## Características
 
-Text-to-SQL is a classic problem that showcases the power of AI agents to understand complex schemas, reason about data, and generate executable code. This template demonstrates how to build a conversational SQL agent using Mastra's tools and architecture. It's a great starting point for anyone looking to create AI agents that interact with databases, whether for analytics, customer support, or internal tools.
+- **Multi-empresa (multitenant)**: aislamiento de datos por `empresaId`, aplicado de forma **determinista en código** (no se confía en el LLM).
+- **Control de acceso por rol**: `colaborador` (solo sus datos), `gerencia` (su área), `admin` (toda la empresa).
+- **Desambiguación proactiva**: ante preguntas vagas, propone una interpretación y pide confirmación antes de ejecutar.
+- **Diccionario de datos + fallback offline** del esquema para guiar la generación de SQL.
+- **Observabilidad** con filtrado de datos sensibles (PII).
 
-## Demo
+## Arquitectura
 
-<video controls width="640" height="360" src="https://res.cloudinary.com/mastra-assets/video/upload/v1772538183/template-text-to-sql_pgibmm.mp4"></video>
+```
+src/mastra/
+├── index.ts                 # new Mastra(): agente, storage, logger, observability, middleware del server
+├── logger.ts                # PinoLogger compartido
+├── user-context.ts          # tipo UserContext + lectura desde RequestContext + helpers de rol
+├── agents/
+│   └── sql-agent.ts         # agente "ROMA IA" con instrucciones dinámicas según el contexto
+└── tools/
+    ├── introspect-database.ts  # esquema + diccionario + reglas de negocio (con fallback estático)
+    └── execute-sql.ts          # ejecuta SELECT + aislamiento multi-tenant determinista
+```
 
-This demo runs in Mastra Studidddo, but you can connect this agent to your React, Next.js, or Vue app using the [Mastra Client SDK](https://mastra.ai/docs/server/mastra-client) or agentic UI libraries like [AI SDK UI](https://mastra.ai/guides/build-your-ui/ai-sdk-ui), [CopilotKit](https://mastra.ai/guides/build-your-ui/copilotkit), or [Assistant UI](https://mastra.ai/guides/build-your-ui/assistant-ui).
+El contexto del usuario (`empresaId`, `colaboradorID`, `rol`, `area`) viaja **fuera del prompt**, a través del `RequestContext` de Mastra, poblado por un middleware del servidor a partir de cabeceras HTTP de confianza. Ver [API.md](API.md).
 
-## Quick start
+## Inicio rápido
 
-1. **Clone the template**
-   - Run `npx create-mastra@latest --template text-to-sql` to scaffold the project locally.
-2. **Add your API key**
-   - Copy `.env.example` to `.env` and fill in your OpenAI API key.
-3. **Start the dev server**
-   - Run `npm run dev` and open [localhost:4111](http://localhost:4111) to try it out.
+1. **Instalar dependencias**: `pnpm install`
+2. **Configurar entorno**: copia `.env.example` a `.env` y completa la clave del modelo (`OPENAI_API_KEY` u `OPENROUTER_API_KEY`) y la conexión MySQL (`DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_DATABASE`).
+3. **Arrancar**: `pnpm dev` y abre [localhost:4111](http://localhost:4111).
 
-Open Studio and start chatting with the SQL agent. The agent can introspect the database schema, convert your natural language questions into SQL queries, and return the results.
+> Si MySQL no está disponible, la introspección usa un diccionario estático de fallback (`introspect-database.ts`) para que el agente siga funcionando en modo demo.
 
-> Need a database to try? The template comes with a pre-seeded SQLite database (`data.db`) containing sample company and employee data.
+## Scripts
 
-### Example Queries
+| Script | Descripción |
+|---|---|
+| `pnpm dev` | Servidor de desarrollo de Mastra (Studio + API HTTP). |
+| `pnpm build` | Build de producción. |
+| `pnpm start` | Arranca el build. |
+| `pnpm typecheck` | Verificación de tipos con `tsc`. |
 
-- "What tables are in the database?"
-- "Show me all employees at Acme Corp"
-- "What's the average salary by department?"
-- "Which projects are currently in progress and what's their total budget?"
-- "List employees hired in 2023 sorted by salary"
-- "Which company has the highest revenue?"
+## Seguridad
 
-## Making it yours
+El aislamiento multi-empresa y el control por rol se aplican en [`execute-sql.ts`](src/mastra/tools/execute-sql.ts) como capa determinista de defensa-en-profundidad (rechaza consultas que referencien otra empresa u otro colaborador). Para una garantía más fuerte en producción, se recomienda además usar **credenciales/vistas de MySQL por empresa** y que las cabeceras de contexto provengan de un **JWT verificado** en el backend, nunca directamente del cliente.
 
-This template is a starting point. Here are some ideas to make it your own:
-
-- Connect to a different database (PostgreSQL, MySQL, etc.) by swapping out the database client and adjusting the introspection and execution tools.
-- Add authentication and user management to control access to the database.
-- Implement more advanced SQL features like JOINs, subqueries, or transactions.
-- Build a custom frontend using the Mastra Client SDK or UI libraries to create a polished user interface.
-
-## About Mastra templates
-
-[Mastra templates](https://mastra.ai/templates) are ready-to-use projects that show off what you can build — clone one, poke around, and make it yours. They live in the [Mastra monorepo](https://github.com/mastra-ai/mastra) and are automatically synced to standalone repositories for easier cloning.
-
-Want to contribute? See [CONTRIBUTING.md](https://github.com/mastra-ai/mastra/blob/main/templates/template-text-to-sql/CONTRIBUTING.md).
+Construido sobre [Mastra](https://mastra.ai).

@@ -1,4 +1,5 @@
 import mysql from 'mysql2/promise';
+import { logger } from './logger';
 
 let pool: mysql.Pool | null = null;
 
@@ -13,7 +14,7 @@ export function getMysqlPool(): mysql.Pool {
     const password = process.env.DB_PASSWORD || '';
     const database = process.env.DB_DATABASE || 'roma_rrhh';
 
-    console.log(`[MySQL] Inicializando pool de conexiones para la base de datos "${database}" en ${host}:${port}`);
+    logger.info(`[MySQL] Inicializando pool de conexiones para la base de datos "${database}" en ${host}:${port}`);
 
     pool = mysql.createPool({
       host,
@@ -51,7 +52,7 @@ export async function executeQuery<T = any>({
     const [rows] = await connection.execute(query, params);
     return rows as T;
   } catch (error) {
-    console.error('[MySQL] Error en la ejecución de la consulta:', error);
+    logger.error('[MySQL] Error en la ejecución de la consulta', { error });
     throw error;
   } finally {
     connection.release();

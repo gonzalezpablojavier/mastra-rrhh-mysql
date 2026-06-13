@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { executeQuery } from '../db';
+import { logger } from '../logger';
 
 const REGLAS_SEMANTICAS_RRHH = `
 ### 📋 Reglas Semánticas y de Negocio de RRHH (Glosario de Desambiguación)
@@ -189,7 +190,7 @@ export const introspectDatabase = createTool({
         params: [dbName],
       });
     } catch (err) {
-      console.warn('[MySQL Introspect] Error conectando al servidor MySQL. Utilizando diccionario fallback estático.', err);
+      logger.warn('[MySQL Introspect] Error conectando al servidor MySQL. Utilizando diccionario fallback estático.', { err });
       isFallback = true;
     }
 

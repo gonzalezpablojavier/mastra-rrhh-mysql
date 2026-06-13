@@ -51,14 +51,21 @@ Las peticiones `POST` a los endpoints de generación o streaming aceptan un body
 
 ---
 
-## 4. Control de Acceso y Seguridad (Inyección de Contexto)
+## 4. Control de Acceso y Seguridad (Cabeceras de Contexto)
 
 > [!IMPORTANT]
-> El agente `hr-sql-agent` posee estrictas políticas de seguridad multitenant y privacidad basadas en roles. Para que las consultas SQL se ejecuten con éxito, debes proveer el bloque de contexto del usuario actual en la conversación o en el mensaje en el formato exacto:
+> El agente `hr-sql-agent` aplica aislamiento multi-empresa y privacidad por rol **de forma determinista en código**. El contexto del usuario ya **NO** se envía dentro del mensaje, sino mediante **cabeceras HTTP de confianza** que un middleware del servidor traslada al `RequestContext` de Mastra:
 >
-> `[CONTEXTO_USUARIO: colaboradorID=X, rol=Y, area=A, empresaId=Z]`
+> | Cabecera | Descripción |
+> |---|---|
+> | `x-empresa-id` | ID de la empresa (tenant). **Obligatorio.** |
+> | `x-colaborador-id` | ID del colaborador autenticado. **Obligatorio.** Aísla además la memoria. |
+> | `x-rol` | Rol: `colaborador`, `gerencia` o `admin`. |
+> | `x-area` | Área del colaborador (usada por el rol `gerencia`). |
 >
-> Si este bloque de contexto no se proporciona, o si las credenciales no tienen permisos suficientes para consultar la información solicitada, el agente denegará la petición por seguridad.
+> Si no se reciben `x-empresa-id` y `x-colaborador-id`, el agente **no ejecuta ninguna consulta** y responde que la sesión no está autenticada.
+>
+> ⚠️ **Producción**: estas cabeceras deben ser establecidas por un backend que verifique un **JWT**, nunca enviadas directamente por el cliente final (de lo contrario serían falsificables).
 
 ---
 
@@ -69,8 +76,12 @@ Las peticiones `POST` a los endpoints de generación o streaming aceptan un body
 ```bash
 curl -X POST http://localhost:4111/api/agents/hr-sql-agent/generate \
   -H "Content-Type: application/json" \
+  -H "x-empresa-id: 1" \
+  -H "x-colaborador-id: 2" \
+  -H "x-rol: colaborador" \
+  -H "x-area: Sistemas" \
   -d '{
-    "messages": "[CONTEXTO_USUARIO: colaboradorID=2, rol=colaborador, area=Sistemas, empresaId=1] Hola, ¿cuántos días de vacaciones tengo disponibles?",
+    "messages": "Hola, ¿cuántos días de vacaciones tengo disponibles?",
     "threadId": "sesion_usuario_123"
   }'
 ```
@@ -80,25 +91,24 @@ curl -X POST http://localhost:4111/api/agents/hr-sql-agent/generate \
 ```javascript
 async function consultarAgenteRRHH() {
   const url = 'http://localhost:4111/api/agents/hr-sql-agent/generate';
-  const payload = {
-    messages: '[CONTEXTO_USUARIO: colaboradorID=2, rol=colaborador, area=Sistemas, empresaId=1] ¿Cuáles son las políticas de vacaciones?',
-    threadId: 'sesion_usuario_123'
-  };
 
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-empresa-id': '1',
+      'x-colaborador-id': '2',
+      'x-rol': 'colaborador',
+      'x-area': 'Sistemas',
+    },
+    body: JSON.stringify({
+      messages: '¿Cuáles son las políticas de vacaciones?',
+      threadId: 'sesion_usuario_123',
+    }),
+  });
 
-    const data = await response.json();
-    console.log('Respuesta del agente:', data.text);
-  } catch (error) {
-    console.error('Error al consultar el agente:', error);
-  }
+  const data = await response.json();
+  console.log('Respuesta del agente:', data.text);
 }
 ```
 
@@ -106,19 +116,25 @@ async function consultarAgenteRRHH() {
 
 ## 6. Uso Alternativo: SDK de Cliente (`@mastra/client-js`)
 
-Mastra provee un SDK de cliente oficial para conectar servicios de forma tipada:
+Mastra provee un SDK de cliente oficial. Las cabeceras de contexto se pasan al construir el cliente:
 
 ```typescript
 import { MastraClient } from '@mastra/client-js';
 
 const client = new MastraClient({
   baseUrl: 'http://localhost:4111',
+  headers: {
+    'x-empresa-id': '1',
+    'x-colaborador-id': '2',
+    'x-rol': 'colaborador',
+    'x-area': 'Sistemas',
+  },
 });
 
 const agent = client.getAgent('hr-sql-agent');
 
 const response = await agent.generate({
-  messages: '[CONTEXTO_USUARIO: colaboradorID=2, rol=colaborador, area=Sistemas, empresaId=1] Hola agente',
+  messages: 'Hola agente, ¿cuántos días de vacaciones tengo?',
 });
 
 console.log(response.text);

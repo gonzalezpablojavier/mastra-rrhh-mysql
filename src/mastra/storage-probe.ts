@@ -1,5 +1,5 @@
 import { createClient } from '@libsql/client';
-import { logger } from './logger';
+import { logger, describeError } from './logger';
 import { libsqlUrl, libsqlAuthToken } from './libsql-config';
 
 /**
@@ -55,8 +55,7 @@ export async function probeLibsql(): Promise<void> {
     const rs = await client.execute('SELECT 1');
     logger.info('[probe] (2) createClient().execute OK', { filas: rs.rows.length });
   } catch (err) {
-    logger.error('[probe] (2) createClient().execute FALLÓ — ESTA es la causa raíz:', {
-      err: err as Error,
-    });
+    // Causa raíz aplanada en el propio mensaje (no se puede truncar).
+    logger.error(`[probe] (2) createClient().execute FALLÓ — CAUSA RAIZ >> ${describeError(err)}`);
   }
 }

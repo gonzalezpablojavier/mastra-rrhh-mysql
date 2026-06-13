@@ -9,7 +9,7 @@ import {
   SensitiveDataFilter,
 } from '@mastra/observability';
 import { sqlAgent } from './agents/sql-agent';
-import { logger } from './logger';
+import { logger, describeError } from './logger';
 import { libsqlUrl, libsqlAuthToken } from './libsql-config';
 import { probeLibsql } from './storage-probe';
 
@@ -19,12 +19,10 @@ import { probeLibsql } from './storage-probe';
 // (nuestro logger), exponiendo la causa raíz real del "fetch failed", y (b) evitar
 // que el cold-start muera, dándole al resto de la función la chance de responder.
 process.on('unhandledRejection', (reason) => {
-  logger.error('[unhandledRejection] capturado (no se mata el proceso):', {
-    err: reason instanceof Error ? reason : new Error(String(reason)),
-  });
+  logger.error(`[unhandledRejection] CAUSA RAIZ >> ${describeError(reason)}`);
 });
 process.on('uncaughtException', (err) => {
-  logger.error('[uncaughtException] capturado (no se mata el proceso):', { err });
+  logger.error(`[uncaughtException] CAUSA RAIZ >> ${describeError(err)}`);
 });
 
 // Diagnóstico temporal: al hacer cold-start, comprueba la conectividad real a

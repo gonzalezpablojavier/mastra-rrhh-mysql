@@ -28,6 +28,38 @@ function serializeError(err: Error, depth = 0): Record<string, unknown> {
   return out;
 }
 
+/**
+ * Aplana toda la cadena `.cause` de un error a UN string de una línea, incluyendo
+ * los campos de red de undici/Node (`code`, `errno`, `syscall`, `address`, `port`).
+ *
+ * Sirve para diagnóstico: al meter la causa raíz dentro del *mensaje* (y no en un
+ * objeto anidado), ningún `console` con profundidad limitada puede truncarla a
+ * `[Error]`. Devuelve algo como:
+ *   "fetch failed  <-  Error: connect ETIMEDOUT 1.2.3.4:443 [code=ETIMEDOUT syscall=connect]"
+ */
+export function describeError(err: unknown): string {
+  const parts: string[] = [];
+  let cur: any = err;
+  let depth = 0;
+  while (cur && depth < 8) {
+    const meta = [
+      cur.code && `code=${cur.code}`,
+      cur.errno && `errno=${cur.errno}`,
+      cur.syscall && `syscall=${cur.syscall}`,
+      cur.address && `address=${cur.address}`,
+      cur.port && `port=${cur.port}`,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const name = cur.name || (cur.constructor && cur.constructor.name) || 'Error';
+    const msg = cur.message ?? String(cur);
+    parts.push(`${name}: ${msg}${meta ? ` [${meta}]` : ''}`);
+    cur = cur.cause;
+    depth++;
+  }
+  return parts.join('  <-  ');
+}
+
 function expandErrors(obj: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {

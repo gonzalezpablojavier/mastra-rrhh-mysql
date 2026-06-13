@@ -1,7 +1,10 @@
 import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
+import { UnicodeNormalizer, PromptInjectionDetector, PIIDetector } from '@mastra/core/processors';
 import { introspectDatabase } from '../tools/introspect-database';
 import { executeSql } from '../tools/execute-sql';
+import { searchDocuments } from '../tools/search-documents';
+import { requestVacation, logMood, submitIdea, setAttendanceStatus } from '../tools/actions';
 import { getUserContext, esRolAdmin, esRolGerencia } from '../user-context';
 
 /**
@@ -55,10 +58,18 @@ Si la pregunta del usuario requiere asunciones de negocio o no define claramente
 - Ejemplo: \`SELECT colaboradorID, nombre, apellido FROM usuarios_registrados WHERE nombre LIKE '%Juan%' OR apellido LIKE '%Juan%' LIMIT 5;\`
 - Utiliza el \`colaboradorID\` obtenido de esa consulta para filtrar las consultas en las demás tablas (como \`presentismo\`, \`vacaciones\`, \`estado_asistencia\`, \`mood\`, \`idea_box\`).
 
-## Consultas de Cultura, Hábitos y Preguntas Generales Internas (Tabla FAQ)
-- Si el usuario realiza preguntas sobre la cultura de la empresa, hábitos, horarios generales, políticas internas, beneficios, onboarding u otras preguntas frecuentes de la organización, **DEBES** resolver la respuesta consultando la tabla \`faq\`.
-- Ejemplo de consulta: \`SELECT respuesta FROM faq WHERE (pregunta LIKE '%vacaciones%' OR keywords LIKE '%vacaciones%') AND isActive = 1 AND empresaId = 'Z' LIMIT 3;\`
-- Filtra siempre por \`isActive = 1\` y asegúrate de aplicar el aislamiento multitenant de \`empresaId\` en la tabla \`faq\`.
+## Acciones de Autogestión (Escritura con Confirmación)
+Además de consultar, puedes ayudar al colaborador a realizar acciones con estas herramientas: \`request-vacation\` (solicitar vacaciones), \`log-mood\` (registrar su ánimo del día), \`submit-idea\` (enviar una idea al buzón) y \`set-attendance-status\` (justificar/evaluar asistencia, SOLO gerencia/admin).
+**Protocolo obligatorio de confirmación (Human-in-the-Loop):**
+1. Cuando el usuario pida realizar una acción, llama a la herramienta correspondiente **SIN** el parámetro \`confirmar\` (o con \`confirmar: false\`).
+2. La herramienta devolverá un resumen ("confirmacion_requerida"). Muéstraselo al usuario de forma clara y amable y **pídele confirmación explícita** ("¿Confirmás que registre esta solicitud?").
+3. **SOLO** cuando el usuario confirme explícitamente, vuelve a llamar a la herramienta con \`confirmar: true\` para ejecutar la acción.
+4. Nunca ejecutes una acción de escritura (confirmar: true) sin que el usuario haya confirmado en su mensaje. El colaboradorID y la empresa se toman automáticamente del contexto seguro; no los pidas ni los inventes.
+
+## Consultas de Cultura, Hábitos y Documentos Internos (FAQ + Documentos)
+- Para preguntas sobre cultura, hábitos, horarios generales, políticas internas, beneficios u onboarding, primero consulta la tabla \`faq\` (filtrando por \`isActive = 1\` y \`empresaId\`).
+- Ejemplo: \`SELECT respuesta FROM faq WHERE (pregunta LIKE '%vacaciones%' OR keywords LIKE '%vacaciones%') AND isActive = 1 AND empresaId = 'Z' LIMIT 3;\`
+- Si la pregunta requiere documentación más extensa (convenio colectivo, manual del empleado, políticas detalladas) o la FAQ no alcanza, usa la herramienta \`search-documents\` para recuperar fragmentos relevantes de los documentos internos y redacta la respuesta a partir de ellos. Cita la fuente de forma natural ("según el manual del empleado...").
 
 ## Consultas Externas y de Interés General (Límites de Conocimiento)
 - Si el usuario realiza una pregunta sobre paritarias externas ajenas a la organización, normativas generales de trabajo a nivel nacional que no estén en la base de datos (ej: paritarias de comercio del mes actual), cotizaciones, noticias externas o cualquier tema fuera de la empresa:
@@ -138,16 +149,38 @@ export const sqlAgent = new Agent({
     }
     return BASE_INSTRUCTIONS + '\n\n' + buildAccessControlBlock(user.rol, user.empresaId, user.colaboradorID, user.area);
   },
-  tools: { introspectDatabase, executeSql },
+  tools: { introspectDatabase, executeSql, searchDocuments, requestVacation, logMood, submitIdea, setAttendanceStatus },
   defaultOptions: {
     modelSettings: {
       maxOutputTokens: 1500,
     },
     maxSteps: 5,
   },
+  // Guardrails de entrada: normaliza Unicode y bloquea intentos de prompt-injection
+  // (p. ej. mensajes que intenten reescribir el contexto de seguridad).
+  inputProcessors: [
+    new UnicodeNormalizer({ stripControlChars: true }),
+    new PromptInjectionDetector({ model: resolveModel(), strategy: 'block', threshold: 0.75 }),
+  ],
+  // Guardrail de salida: detecta PII y la marca (no la redacta, porque el colaborador
+  // legítimamente consulta sus propios datos; el aislamiento entre usuarios ya lo
+  // garantiza el guard determinista de execute-sql y SensitiveDataFilter en las trazas).
+  outputProcessors: [new PIIDetector({ model: resolveModel(), strategy: 'warn' })],
+  // Working memory por colaborador: recuerda nombre preferido, idioma y temas abiertos
+  // entre conversaciones (scope 'resource' = aislado por colaboradorID).
   memory: new Memory({
     options: {
       lastMessages: 20,
+      workingMemory: {
+        enabled: true,
+        scope: 'resource',
+        template: `# Perfil del colaborador
+- **Nombre preferido**:
+- **Idioma**:
+- **Área**:
+- **Temas/solicitudes abiertas**:
+- **Preferencias**:`,
+      },
     },
   }),
 });

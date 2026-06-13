@@ -22,17 +22,30 @@ export async function probeLibsql(): Promise<void> {
   }
 
   try {
-    // Un GET a la raíz alcanza para confirmar red (egress + DNS + TLS). No nos
-    // importa el status HTTP: si responde algo, la conectividad existe y el
-    // problema está en otro lado (protocolo/transporte/token).
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: token ? { authorization: `Bearer ${token}` } : {},
+    // Replicamos la petición REAL del cliente libsql: POST al endpoint de
+    // pipeline con el token y un SELECT 1. Esto valida red + token + transporte,
+    // igual que hace LibSQLStore al crear sus tablas.
+    const res = await fetch(`${url}/v2/pipeline`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        requests: [
+          { type: 'execute', stmt: { sql: 'SELECT 1' } },
+          { type: 'close' },
+        ],
+      }),
     });
-    logger.info('[probe] Turso ALCANZABLE (la red está OK)', {
+    const cuerpo = await res.text();
+    logger.info('[probe] POST /v2/pipeline respondió', {
       status: res.status,
+      ok: res.ok,
       url,
       tokenPresente: Boolean(token),
+      // Recortado: si es 200 trae los resultados; si es 401 trae el motivo.
+      cuerpo: cuerpo.slice(0, 300),
     });
   } catch (err) {
     logger.error('[probe] fetch a Turso FALLÓ — causa de red:', { err: err as Error });

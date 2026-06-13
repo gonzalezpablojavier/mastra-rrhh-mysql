@@ -1,3 +1,6 @@
+// IMPORTANTE: primero de todo — ajusta el dispatcher global de undici (connect
+// timeout) antes de que se construya cualquier cliente HTTP (libsql/Turso).
+import './bootstrap';
 import { Mastra } from '@mastra/core/mastra';
 import { LibSQLStore } from '@mastra/libsql';
 import { VercelDeployer } from '@mastra/deployer-vercel';
@@ -40,7 +43,10 @@ export const mastra = new Mastra({
   // Deployer de Vercel: hace que `mastra build` genere la estructura serverless
   // que Vercel entiende (función + vercel.json). maxDuration alto porque el agente
   // encadena varios pasos de tools (introspección + SQL + redacción).
-  deployer: new VercelDeployer({ maxDuration: 60 }),
+  // Región pegada a Turso (us-east-2 / Ohio) para minimizar la latencia del
+  // handshake TCP y evitar el `connect ETIMEDOUT` intermitente. iad1 (Washington
+  // DC, us-east-1) es la región de Vercel más cercana a us-east-2.
+  deployer: new VercelDeployer({ maxDuration: 60, regions: ['iad1'] }),
   server: {
     /**
      * Middleware que traslada el contexto del usuario desde cabeceras HTTP de

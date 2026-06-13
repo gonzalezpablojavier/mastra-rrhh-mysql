@@ -2,6 +2,7 @@
 // timeout) antes de que se construya cualquier cliente HTTP (libsql/Turso).
 import './bootstrap';
 import { Mastra } from '@mastra/core/mastra';
+import { registerApiRoute } from '@mastra/core/server';
 import { LibSQLStore } from '@mastra/libsql';
 import { VercelDeployer } from '@mastra/deployer-vercel';
 import { MASTRA_RESOURCE_ID_KEY } from '@mastra/core/request-context';
@@ -78,6 +79,41 @@ export const mastra = new Mastra({
         }
         await next();
       },
+    ],
+    /**
+     * Ruta de diagnóstico TEMPORAL. Ejecuta el agente igual que `/generate` pero
+     * atrapa el error y lo devuelve en la respuesta HTTP en texto plano (sin pasar
+     * por Pino, que trunca los Error a `{}`). Permite ver la causa raíz del 500 con
+     * un solo `curl https://<host>/diag`. Quitar una vez resuelto.
+     */
+    apiRoutes: [
+      registerApiRoute('/diag', {
+        method: 'GET',
+        handler: async (c) => {
+          const m = c.get('mastra');
+          const pasos: Record<string, unknown> = {};
+          // 1) Storage: forzar init explícito y reportar.
+          try {
+            const storage = m.getStorage?.();
+            await (storage as any)?.init?.();
+            pasos.storageInit = 'OK';
+          } catch (err) {
+            pasos.storageInit = describeError(err);
+          }
+          // 2) Agente: reproducir el generate.
+          try {
+            const agent = m.getAgent('sqlAgent');
+            const res = await agent.generate('Decí "hola" en una palabra.', {
+              memory: { thread: 'diag-thread', resource: 'diag-user' },
+            });
+            pasos.agentGenerate = 'OK';
+            return c.json({ ok: true, pasos, text: res.text });
+          } catch (err) {
+            pasos.agentGenerate = describeError(err);
+            return c.json({ ok: false, pasos, stack: (err as Error)?.stack }, 500);
+          }
+        },
+      }),
     ],
   },
   observability: new Observability({

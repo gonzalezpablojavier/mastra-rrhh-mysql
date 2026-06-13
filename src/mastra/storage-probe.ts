@@ -1,3 +1,4 @@
+import { createClient } from '@libsql/client';
 import { logger } from './logger';
 import { libsqlUrl, libsqlAuthToken } from './libsql-config';
 
@@ -21,10 +22,8 @@ export async function probeLibsql(): Promise<void> {
     return;
   }
 
+  // 1) fetch nativo plano (ya probado que funciona) — control.
   try {
-    // Replicamos la petición REAL del cliente libsql: POST al endpoint de
-    // pipeline con el token y un SELECT 1. Esto valida red + token + transporte,
-    // igual que hace LibSQLStore al crear sus tablas.
     const res = await fetch(`${url}/v2/pipeline`, {
       method: 'POST',
       headers: {
@@ -38,16 +37,26 @@ export async function probeLibsql(): Promise<void> {
         ],
       }),
     });
-    const cuerpo = await res.text();
-    logger.info('[probe] POST /v2/pipeline respondió', {
+    logger.info('[probe] (1) fetch nativo a /v2/pipeline', {
       status: res.status,
-      ok: res.ok,
-      url,
       tokenPresente: Boolean(token),
-      // Recortado: si es 200 trae los resultados; si es 401 trae el motivo.
-      cuerpo: cuerpo.slice(0, 300),
     });
   } catch (err) {
-    logger.error('[probe] fetch a Turso FALLÓ — causa de red:', { err: err as Error });
+    logger.error('[probe] (1) fetch nativo FALLÓ:', { err: err as Error });
+  }
+
+  // 2) EXACTAMENTE lo que hace LibSQLStore: createClient(...).execute('SELECT 1').
+  //    Si esto falla, reproduce el bug y el logger expande la causa raíz real.
+  try {
+    const client = createClient({
+      url,
+      ...(token ? { authToken: token } : {}),
+    });
+    const rs = await client.execute('SELECT 1');
+    logger.info('[probe] (2) createClient().execute OK', { filas: rs.rows.length });
+  } catch (err) {
+    logger.error('[probe] (2) createClient().execute FALLÓ — ESTA es la causa raíz:', {
+      err: err as Error,
+    });
   }
 }

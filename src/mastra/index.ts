@@ -90,27 +90,42 @@ export const mastra = new Mastra({
       registerApiRoute('/diag', {
         method: 'GET',
         handler: async (c) => {
-          const m = c.get('mastra');
           const pasos: Record<string, unknown> = {};
-          // 1) Storage: forzar init explícito y reportar.
+          // Todo envuelto en un try externo: cualquier throw se reporta en el body
+          // (200) en vez de caer al manejador genérico de Mastra (500 sin detalle).
           try {
-            const storage = m.getStorage?.();
-            await (storage as any)?.init?.();
-            pasos.storageInit = 'OK';
+            const m = c.get('mastra') as any;
+            pasos.mastra = m ? 'presente' : 'AUSENTE';
+
+            // 1) Storage: forzar init explícito.
+            try {
+              const storage = m?.getStorage?.();
+              pasos.storage = storage ? 'presente' : 'AUSENTE';
+              await storage?.init?.();
+              pasos.storageInit = 'OK';
+            } catch (err) {
+              pasos.storageInit = describeError(err);
+            }
+
+            // 2) Agente — solo si ?agent=1 (para aislar del storage).
+            if (c.req.query('agent') === '1') {
+              try {
+                const agent = m.getAgent('sqlAgent');
+                const res = await agent.generate('Decí "hola" en una palabra.', {
+                  memory: { thread: 'diag-thread', resource: 'diag-user' },
+                });
+                pasos.agentGenerate = 'OK';
+                pasos.text = res.text;
+              } catch (err) {
+                pasos.agentGenerate = describeError(err);
+                pasos.agentStack = (err as Error)?.stack;
+              }
+            }
+
+            return c.json({ ok: true, pasos });
           } catch (err) {
-            pasos.storageInit = describeError(err);
-          }
-          // 2) Agente: reproducir el generate.
-          try {
-            const agent = m.getAgent('sqlAgent');
-            const res = await agent.generate('Decí "hola" en una palabra.', {
-              memory: { thread: 'diag-thread', resource: 'diag-user' },
-            });
-            pasos.agentGenerate = 'OK';
-            return c.json({ ok: true, pasos, text: res.text });
-          } catch (err) {
-            pasos.agentGenerate = describeError(err);
-            return c.json({ ok: false, pasos, stack: (err as Error)?.stack }, 500);
+            // Captura cualquier cosa que se nos haya escapado.
+            return c.json({ ok: false, pasos, fatal: describeError(err), stack: (err as Error)?.stack });
           }
         },
       }),

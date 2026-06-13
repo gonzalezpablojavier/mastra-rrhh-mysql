@@ -10,13 +10,14 @@ import {
 } from '@mastra/observability';
 import { sqlAgent } from './agents/sql-agent';
 import { logger } from './logger';
+import { libsqlUrl, libsqlAuthToken } from './libsql-config';
 
 export const mastra = new Mastra({
   agents: { sqlAgent },
   storage: new LibSQLStore({
     id: 'mastra-storage',
-    url: process.env.LIBSQL_URL ?? 'file:./mastra.db',
-    ...(process.env.LIBSQL_AUTH_TOKEN ? { authToken: process.env.LIBSQL_AUTH_TOKEN } : {}),
+    url: libsqlUrl(),
+    ...(libsqlAuthToken() ? { authToken: libsqlAuthToken() } : {}),
   }),
   logger,
   // Deployer de Vercel: hace que `mastra build` genere la estructura serverless

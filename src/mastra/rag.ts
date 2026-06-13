@@ -1,6 +1,7 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { LibSQLVector } from '@mastra/libsql';
 import { logger } from './logger';
+import { libsqlUrl, libsqlAuthToken } from './libsql-config';
 
 /**
  * Capa de RAG documental.
@@ -24,8 +25,8 @@ const embeddingModel = embeddingProvider.embeddingModel('text-embedding-3-small'
 
 export const vectorStore = new LibSQLVector({
   id: 'rag-vector',
-  url: process.env.LIBSQL_URL ?? 'file:./mastra.db',
-  ...(process.env.LIBSQL_AUTH_TOKEN ? { authToken: process.env.LIBSQL_AUTH_TOKEN } : {}),
+  url: libsqlUrl(),
+  ...(libsqlAuthToken() ? { authToken: libsqlAuthToken() } : {}),
 });
 
 /** Genera el embedding de un texto. */

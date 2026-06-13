@@ -29,13 +29,12 @@ Mastra expone rutas automáticas para cada agente registrado.
 
 ## 3. Estructura del Payload (JSON Body)
 
-Las peticiones `POST` a los endpoints de generación o streaming aceptan un body en formato JSON con la siguiente estructura básica:
+Las peticiones `POST` a los endpoints de generación o streaming aceptan un body en formato JSON con la siguiente estructura (verificada contra el servidor de Mastra 1.x):
 
 ```json
 {
   "messages": "string | CoreMessage[]",
-  "threadId": "string",
-  "memory": "boolean"
+  "memory": { "thread": "string", "resource": "string" }
 }
 ```
 
@@ -46,8 +45,14 @@ Las peticiones `POST` a los endpoints de generación o streaming aceptan un body
     { "role": "user", "content": "Hola, ¿cuál es mi horario?" }
   ]
   ```
-* **`threadId`** *(Opcional)*: Identificador único del hilo de conversación para mantener la persistencia y contexto histórico.
-* **`memory`** *(Opcional)*: Booleano que indica si se debe utilizar o no el almacenamiento del historial en la base de datos de Mastra.
+* **`memory`** *(Obligatorio si el agente usa Memory — este lo usa)*: objeto con **ambos** campos:
+  * **`thread`**: identificador del hilo de conversación (persiste el historial de esa conversación).
+  * **`resource`**: identificador del usuario dueño de la memoria. **Debe ser el `colaboradorID`.**
+
+> [!NOTE]
+> El campo `memory.resource` que envíe el cliente es **sobrescrito por seguridad** por el servidor con el valor de la cabecera `x-colaborador-id` (vía `MASTRA_RESOURCE_ID_KEY`), de modo que un usuario no pueda acceder a la memoria de otro. Aun así, el body **exige** el campo por validación: envía `resource = colaboradorID`.
+>
+> El formato antiguo `threadId`/`memory: boolean` (top-level) **ya no es válido** en esta versión.
 
 ---
 
@@ -82,7 +87,7 @@ curl -X POST http://localhost:4111/api/agents/hr-sql-agent/generate \
   -H "x-area: Sistemas" \
   -d '{
     "messages": "Hola, ¿cuántos días de vacaciones tengo disponibles?",
-    "threadId": "sesion_usuario_123"
+    "memory": { "thread": "sesion_usuario_123", "resource": "2" }
   }'
 ```
 
@@ -103,13 +108,30 @@ async function consultarAgenteRRHH() {
     },
     body: JSON.stringify({
       messages: '¿Cuáles son las políticas de vacaciones?',
-      threadId: 'sesion_usuario_123',
+      memory: { thread: 'sesion_usuario_123', resource: '2' },
     }),
   });
 
   const data = await response.json();
   console.log('Respuesta del agente:', data.text);
 }
+```
+
+### Ejemplo: dominio "global" (Mundial)
+
+Las tablas de scope `global` (ej: posiciones del Mundial) no requieren `empresaId`, así que cualquier colaborador puede consultarlas:
+
+```bash
+curl -X POST http://localhost:4111/api/agents/hr-sql-agent/generate \
+  -H "Content-Type: application/json" \
+  -H "x-empresa-id: 1" \
+  -H "x-colaborador-id: 2" \
+  -H "x-rol: colaborador" \
+  -H "x-area: Sistemas" \
+  -d '{
+    "messages": "¿Cómo va Argentina en el mundial?",
+    "memory": { "thread": "sesion_usuario_123", "resource": "2" }
+  }'
 ```
 
 ---
@@ -135,6 +157,7 @@ const agent = client.getAgent('hr-sql-agent');
 
 const response = await agent.generate({
   messages: 'Hola agente, ¿cuántos días de vacaciones tengo?',
+  memory: { thread: 'sesion_usuario_123', resource: '2' },
 });
 
 console.log(response.text);

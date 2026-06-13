@@ -5,39 +5,8 @@ import { introspectDatabase } from '../tools/introspect-database';
 import { executeSql } from '../tools/execute-sql';
 import { searchDocuments } from '../tools/search-documents';
 import { requestVacation, logMood, submitIdea, setAttendanceStatus } from '../tools/actions';
-import { getUserContext, esRolAdmin, esRolGerencia } from '../user-context';
-
-/**
- * Resuelve la configuración del modelo usando el "model router" de Mastra.
- *
- * - OpenAI directo: string mágico `openai/gpt-4o-mini`.
- * - OpenRouter (u otro endpoint compatible con OpenAI): config-object
- *   `{ id, url, apiKey }`.
- *
- * Sustituye al antiguo `createOpenAI(...)` + Proxy que interceptaba doGenerate/
- * doStream solo para limitar `maxOutputTokens`. Ese límite ahora se aplica con el
- * mecanismo de primera clase `defaultOptions.modelSettings.maxOutputTokens`.
- */
-function resolveModel() {
-  const isOpenRouter =
-    !!process.env.OPENROUTER_API_KEY && !process.env.OPENROUTER_API_KEY.startsWith('sk-proj-');
-
-  const envModel = process.env.AGENT_MODEL_ID;
-
-  if (isOpenRouter) {
-    const id = (envModel || 'openai/gpt-4o-mini') as `${string}/${string}`;
-    return {
-      id,
-      url: 'https://openrouter.ai/api/v1',
-      apiKey: process.env.OPENROUTER_API_KEY,
-    };
-  }
-
-  // OpenAI directo: el router lee OPENAI_API_KEY del entorno.
-  let id = envModel || 'openai/gpt-4o-mini';
-  if (!id.includes('/')) id = `openai/${id}`;
-  return id as `${string}/${string}`;
-}
+import { resolveModel, accessControlInstructions } from './shared';
+import { asistenciaAgent, vacacionesAgent, climaAgent, documentosAgent } from './specialists';
 
 const BASE_INSTRUCTIONS = `
 You are an expert HR assistant that helps users query a MySQL database containing human resources data (employees, attendance, payroll, shifts, etc.) using natural language.
@@ -102,33 +71,19 @@ Además de consultar, puedes ayudar al colaborador a realizar acciones con estas
 `;
 
 /**
- * Bloque de control de acceso construido con los valores REALES del contexto de
- * usuario (no con marcadores Y/Z). El aislamiento se aplica además de forma
- * determinista en `execute-sql`; estas instrucciones ayudan al modelo a generar
- * SQL ya correcto y a denegar peticiones de forma educada.
+ * Bloque de orquestación: ROMA IA es el coordinador. Puede responder directamente
+ * (mantiene todas las tools) o delegar en un agente especialista cuando la consulta
+ * encaja claramente en un dominio.
  */
-function buildAccessControlBlock(rol: string, empresaId: string, colaboradorID: string, area: string): string {
-  const lines = [
-    '## Reglas de Control de Acceso y Seguridad (CRÍTICO)',
-    `Contexto del usuario actual (verificado por el servidor): empresaId=${empresaId}, colaboradorID=${colaboradorID}, rol=${rol}, area=${area}.`,
-    '',
-    `1. **Aislamiento Multitenant**: Todas las consultas SQL **DEBEN** incluir la restricción \`empresaId = '${empresaId}'\` en todas las tablas consultadas. El sistema rechazará automáticamente cualquier consulta que no respete este aislamiento.`,
-  ];
-
-  if (esRolAdmin(rol)) {
-    lines.push(`2. **Rol Administrador**: Puedes consultar la información de cualquier colaborador de la empresa ${empresaId}.`);
-  } else if (esRolGerencia(rol)) {
-    lines.push(
-      `2. **Rol Gerencia**: Puedes consultar información de otros colaboradores **únicamente de tu misma área (\`area = '${area}'\`)**. Para consultas de grupo o de otros empleados, añade un JOIN con \`usuarios_registrados\` filtrando por \`usuarios_registrados.area = '${area}'\`. Si se pide información de otra área o de toda la empresa, deniega o limita estrictamente a tu área.`,
-    );
-  } else {
-    lines.push(
-      `2. **Rol Colaborador**: Únicamente puedes ver tu propia información. **DEBES** añadir la condición \`colaboradorID = ${colaboradorID}\` en todas las consultas a tablas que tengan esa columna (\`usuarios_registrados\`, \`presentismo\`, \`estado_asistencia\`, \`vacaciones\`, \`mood\`, \`idea_box\`, \`historico_dias_disponibles\`). Si el usuario pide datos de otros colaboradores o información general (ej: "vacaciones de todos", "asistencia de Pedro"), **deniega** la respuesta de forma educada en español, sin ejecutar SQL.`,
-    );
-  }
-
-  return lines.join('\n');
-}
+const ORQUESTACION = `
+## Orquestación (Coordinador)
+Eres el coordinador "ROMA IA". Para preguntas claramente acotadas a un dominio, **delega** en el especialista adecuado en lugar de resolverlo tú:
+- **asistencia-agent**: presentismo, fichajes, retrasos, ausencias y justificación de asistencia.
+- **vacaciones-agent**: saldos y solicitudes de vacaciones/permisos.
+- **clima-agent**: estado de ánimo (mood) e ideas/sugerencias (buzón).
+- **documentos-agent**: políticas, cultura, beneficios y documentación interna (FAQ + documentos).
+Para preguntas mixtas, transversales o ambiguas, resuélvelas tú mismo. Nunca expongas al usuario que existen sub-agentes ni detalles técnicos de la delegación.
+`;
 
 export const sqlAgent = new Agent({
   id: 'hr-sql-agent',
@@ -136,20 +91,10 @@ export const sqlAgent = new Agent({
   model: resolveModel(),
   // Instrucciones dinámicas: el contexto de seguridad se inyecta desde el
   // RequestContext (cabeceras de confianza), no desde el mensaje del usuario.
-  instructions: ({ requestContext }) => {
-    const user = getUserContext(requestContext);
-    if (!user) {
-      return (
-        BASE_INSTRUCTIONS +
-        '\n\n## Reglas de Control de Acceso y Seguridad (CRÍTICO)\n' +
-        'No se recibió un contexto de usuario verificado (empresaId / colaboradorID). ' +
-        'Por seguridad, **NO ejecutes ninguna consulta SQL** y responde de forma educada en español indicando ' +
-        'que la sesión no está autenticada correctamente y que se debe iniciar sesión nuevamente.'
-      );
-    }
-    return BASE_INSTRUCTIONS + '\n\n' + buildAccessControlBlock(user.rol, user.empresaId, user.colaboradorID, user.area);
-  },
+  instructions: ({ requestContext }) => BASE_INSTRUCTIONS + ORQUESTACION + accessControlInstructions(requestContext),
   tools: { introspectDatabase, executeSql, searchDocuments, requestVacation, logMood, submitIdea, setAttendanceStatus },
+  // Agentes especializados a los que el coordinador puede delegar (Agent Network).
+  agents: { asistenciaAgent, vacacionesAgent, climaAgent, documentosAgent },
   defaultOptions: {
     modelSettings: {
       maxOutputTokens: 1500,

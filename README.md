@@ -6,6 +6,11 @@ Agente de Recursos Humanos construido con [Mastra](https://mastra.ai) que respon
 
 - **Multi-empresa (multitenant)**: aislamiento de datos por `empresaId`, aplicado de forma **determinista en código** (no se confía en el LLM).
 - **Control de acceso por rol**: `colaborador` (solo sus datos), `gerencia` (su área), `admin` (toda la empresa).
+- **Arquitectura multi-agente**: un coordinador delega en especialistas (asistencia, vacaciones, clima, documentos).
+- **Acciones de autogestión (Human-in-the-Loop)**: solicitar vacaciones, registrar mood, enviar ideas y justificar asistencia, con confirmación en dos fases.
+- **RAG documental**: búsqueda semántica sobre documentos internos (políticas, convenio, manual), filtrada por empresa.
+- **Memoria de trabajo** por colaborador (nombre preferido, idioma, temas abiertos).
+- **Guardrails**: normalización Unicode + detección de prompt-injection (entrada) y de PII (salida).
 - **Desambiguación proactiva**: ante preguntas vagas, propone una interpretación y pide confirmación antes de ejecutar.
 - **Diccionario de datos + fallback offline** del esquema para guiar la generación de SQL.
 - **Observabilidad** con filtrado de datos sensibles (PII).
@@ -14,14 +19,22 @@ Agente de Recursos Humanos construido con [Mastra](https://mastra.ai) que respon
 
 ```
 src/mastra/
-├── index.ts                 # new Mastra(): agente, storage, logger, observability, middleware del server
+├── index.ts                 # new Mastra(): agentes, storage, logger, observability, middleware del server
 ├── logger.ts                # PinoLogger compartido
 ├── user-context.ts          # tipo UserContext + lectura desde RequestContext + helpers de rol
+├── rag.ts                   # vector store LibSQL + embeddings (RAG documental)
 ├── agents/
-│   └── sql-agent.ts         # agente "ROMA IA" con instrucciones dinámicas según el contexto
+│   ├── sql-agent.ts         # coordinador "ROMA IA" (guardrails, working memory, delega en especialistas)
+│   ├── shared.ts            # model router, tono RRHH y bloque de seguridad dinámico compartido
+│   └── specialists.ts       # sub-agentes: asistencia, vacaciones, clima, documentos
 └── tools/
     ├── introspect-database.ts  # esquema + diccionario + reglas de negocio (con fallback estático)
-    └── execute-sql.ts          # ejecuta SELECT + aislamiento multi-tenant determinista
+    ├── execute-sql.ts          # ejecuta SELECT + aislamiento multi-tenant determinista
+    ├── search-documents.ts     # recuperación semántica de documentos (RAG), filtrada por empresa
+    └── actions.ts              # acciones de escritura con confirmación (vacaciones, mood, ideas, asistencia)
+
+scripts/
+└── ingest-docs.ts           # ingesta de documentos a RAG: pnpm ingest  (docs/<empresaId>/*.md)
 ```
 
 El contexto del usuario (`empresaId`, `colaboradorID`, `rol`, `area`) viaja **fuera del prompt**, a través del `RequestContext` de Mastra, poblado por un middleware del servidor a partir de cabeceras HTTP de confianza. Ver [API.md](API.md).

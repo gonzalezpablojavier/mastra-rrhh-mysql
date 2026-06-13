@@ -22,6 +22,7 @@ src/mastra/
 ├── index.ts                 # new Mastra(): agentes, storage, logger, observability, middleware del server
 ├── logger.ts                # PinoLogger compartido
 ├── user-context.ts          # tipo UserContext + lectura desde RequestContext + helpers de rol
+├── catalog.ts               # catálogo de tablas data-driven (scope empresa/personal/global)
 ├── rag.ts                   # vector store LibSQL + embeddings (RAG documental)
 ├── agents/
 │   ├── sql-agent.ts         # coordinador "ROMA IA" (guardrails, working memory, delega en especialistas)
@@ -34,8 +35,20 @@ src/mastra/
     └── actions.ts              # acciones de escritura con confirmación (vacaciones, mood, ideas, asistencia)
 
 scripts/
-└── ingest-docs.ts           # ingesta de documentos a RAG: pnpm ingest  (docs/<empresaId>/*.md)
+├── ingest-docs.ts           # ingesta de documentos a RAG: pnpm ingest  (docs/<empresaId>/*.md)
+└── tabla_config.sql         # catálogo de scopes por tabla (DDL + ejemplo de dominio nuevo)
 ```
+
+## Escalar a nuevos dominios de datos (misma MySQL, sin código)
+
+El agente consulta cualquier tabla de la base vía introspección automática. Para agregar un dominio nuevo:
+
+1. Crear la tabla en MySQL (con `COMMENT` en tabla y columnas para guiar al modelo).
+2. Declarar su política de acceso en `tabla_config` (ver [scripts/tabla_config.sql](scripts/tabla_config.sql)):
+   - `empresa` (filtra por `empresaId`), `personal` (además por `colaboradorID`) o `global` (público, sin tenant).
+3. Reiniciar el proceso (el catálogo se cachea).
+
+No hace falta tocar código: la introspección descubre la tabla y `execute-sql` aplica el scope declarado. Tablas no declaradas se tratan como `empresa` (default seguro).
 
 El contexto del usuario (`empresaId`, `colaboradorID`, `rol`, `area`) viaja **fuera del prompt**, a través del `RequestContext` de Mastra, poblado por un middleware del servidor a partir de cabeceras HTTP de confianza. Ver [API.md](API.md).
 

@@ -2,6 +2,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { executeQuery } from '../db';
 import { logger } from '../logger';
+import { loadCatalog, type Scope } from '../catalog';
 
 const REGLAS_SEMANTICAS_RRHH = `
 ### 📋 Reglas Semánticas y de Negocio de RRHH (Glosario de Desambiguación)
@@ -209,17 +210,29 @@ export const introspectDatabase = createTool({
       tableComments.set(t.TABLE_NAME, t.TABLE_COMMENT || '');
     }
 
+    // Catálogo de scopes/descripciones (data-driven). Determina qué tablas son
+    // globales (sin empresaId) frente a las de empresa/personales.
+    const catalog = await loadCatalog();
+    const scopeHint: Record<Scope, string> = {
+      empresa: 'Dato multiempresa: filtra SIEMPRE por empresaId.',
+      personal: 'Dato personal: filtra por empresaId y (rol colaborador) por su colaboradorID.',
+      global: 'Dato público/compartido: NO requiere empresaId.',
+    };
+
     const lines: string[] = ['# Esquema de Base de Datos MySQL (RRHH) y Diccionario de Datos', ''];
 
     let currentTable = '';
     for (const col of columns) {
       if (col.TABLE_NAME !== currentTable) {
         currentTable = col.TABLE_NAME;
+        const cfg = catalog.get(currentTable.toLowerCase());
+        const scope: Scope = cfg?.scope ?? 'empresa';
         lines.push(`\n## Tabla: ${currentTable}`);
-        const comment = tableComments.get(currentTable) || TABLA_FALLBACK_DESCRIPCIONES[currentTable] || '';
+        const comment = cfg?.descripcion || tableComments.get(currentTable) || TABLA_FALLBACK_DESCRIPCIONES[currentTable] || '';
         if (comment) {
-          lines.push(`**Descripción**: ${comment}\n`);
+          lines.push(`**Descripción**: ${comment}`);
         }
+        lines.push(`**Acceso (${scope})**: ${scopeHint[scope]}\n`);
         lines.push('| Columna | Tipo de Dato | Nullable | Clave | Descripción / Comentario |');
         lines.push('|---|---|---|---|---|');
       }

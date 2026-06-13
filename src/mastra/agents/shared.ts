@@ -50,7 +50,7 @@ export function accessControlInstructions(requestContext?: RequestContext): stri
   const lines = [
     '\n\n## Reglas de Control de Acceso y Seguridad (CRÍTICO)',
     `Contexto del usuario actual (verificado por el servidor): empresaId=${empresaId}, colaboradorID=${colaboradorID}, rol=${rol}, area=${area}.`,
-    `1. **Aislamiento Multitenant**: todas las consultas **DEBEN** incluir \`empresaId = '${empresaId}'\`. El sistema rechaza automáticamente lo que no respete este aislamiento.`,
+    `1. **Aislamiento Multitenant**: las consultas a tablas de empresa o personales **DEBEN** incluir \`empresaId = '${empresaId}'\` (el sistema rechaza lo que no lo respete). Las tablas marcadas como **Acceso (global)** en la introspección (ej: datos públicos) NO requieren empresaId.`,
   ];
 
   if (esRolAdmin(rol)) {

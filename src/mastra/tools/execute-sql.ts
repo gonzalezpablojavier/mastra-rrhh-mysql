@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { executeQuery } from '../db';
 import { logger } from '../logger';
 import { getUserContext, esRolPrivilegiado } from '../user-context';
+import { getScope } from '../catalog';
 
 const BLOCKED_PATTERNS = [
   /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|REPLACE|GRANT|REVOKE|MERGE|CALL)\b/i,
@@ -16,31 +17,30 @@ const BLOCKED_PATTERNS = [
 /** Tope máximo de filas devueltas por consulta para evitar respuestas gigantes. */
 const MAX_ROWS = 500;
 
-/** Tablas que contienen la columna `colaboradorID` y, por tanto, requieren scoping personal. */
-const TABLAS_CON_COLABORADOR = [
-  'usuarios_registrados',
-  'presentismo',
-  'estado_asistencia',
-  'vacaciones',
-  'mood',
-  'idea_box',
-  'historico_dias_disponibles',
-  'colaborador',
-];
+/** Extrae los nombres de tabla referenciados en la consulta (FROM / JOIN). */
+function tablasReferenciadas(query: string): string[] {
+  const tables = new Set<string>();
+  const re = /\b(?:from|join)\s+`?([a-z_][\w]*)`?/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(query)) !== null) {
+    tables.add(m[1].toLowerCase());
+  }
+  return [...tables];
+}
 
 /**
  * Aplica el aislamiento multi-tenant de forma DETERMINISTA en código (no se confía
- * en que el modelo lo haga). Lanza un error si la consulta viola el aislamiento.
+ * en que el modelo lo haga), según el SCOPE de cada tabla declarado en el catálogo:
+ *  - 'global'   → dato público (mundial, feriados…): no exige empresaId.
+ *  - 'empresa'  → exige filtrar por empresaId.
+ *  - 'personal' → además, los roles no privilegiados solo ven su colaboradorID.
  *
- * NOTA: Esta es una capa de defensa-en-profundidad basada en inspección textual de
- * la consulta. La garantía más robusta sería usar credenciales/vistas de MySQL por
- * empresa (un usuario de BD por tenant). Mientras tanto, este guard rechaza de forma
- * conservadora cualquier consulta que referencie un `empresaId`/`colaboradorID`
- * distinto al del contexto autenticado, o que no acote por empresa.
+ * NOTA: capa de defensa-en-profundidad por inspección textual. La garantía más fuerte
+ * sería usar credenciales/vistas de MySQL por empresa. Este guard rechaza de forma
+ * conservadora cualquier referencia a un empresaId/colaboradorID distinto al del
+ * contexto, o la ausencia de filtro de empresa cuando alguna tabla lo requiere.
  */
-function enforceTenantIsolation(query: string, empresaId: string, colaboradorID: string, rol: string): void {
-  const lower = query.toLowerCase();
-
+async function enforceTenantIsolation(query: string, empresaId: string, colaboradorID: string, rol: string): Promise<void> {
   // 1. Toda referencia literal a empresaId debe coincidir con la del contexto.
   const empresaMatches = [...query.matchAll(/empresaid\s*=\s*'?([\w-]+)'?/gi)];
   for (const m of empresaMatches) {
@@ -48,24 +48,28 @@ function enforceTenantIsolation(query: string, empresaId: string, colaboradorID:
       throw new Error('Acceso denegado: la consulta intenta acceder a datos de otra empresa.');
     }
   }
-  // 2. La consulta debe acotar por empresa (al menos una referencia a empresaId).
-  if (empresaMatches.length === 0) {
+
+  // Determinar el scope de cada tabla referenciada.
+  const tablas = tablasReferenciadas(query);
+  const scopes = await Promise.all(tablas.map((t) => getScope(t)));
+  const requierenEmpresa = tablas.filter((_, i) => scopes[i] !== 'global');
+  const tocaPersonales = scopes.includes('personal');
+
+  // 2. Si alguna tabla no es global, la consulta debe acotar por empresa.
+  if (requierenEmpresa.length > 0 && empresaMatches.length === 0) {
     throw new Error('Acceso denegado: la consulta debe filtrar por empresaId para garantizar el aislamiento entre empresas.');
   }
 
-  // 3. Rol no privilegiado (colaborador): solo puede ver su propia información.
+  // 3. Rol no privilegiado (colaborador): solo puede ver su propia información personal.
   if (!esRolPrivilegiado(rol)) {
-    // Ninguna referencia a colaboradorID puede apuntar a otro colaborador.
     const colabMatches = [...query.matchAll(/colaboradorid\s*=\s*'?([\w-]+)'?/gi)];
     for (const m of colabMatches) {
       if (String(m[1]) !== String(colaboradorID)) {
         throw new Error('Acceso denegado: no tienes permisos para consultar información de otros colaboradores.');
       }
     }
-    // Si toca tablas con datos personales, debe acotar por su propio colaboradorID.
-    const tocaTablasPersonales = TABLAS_CON_COLABORADOR.some((t) => new RegExp(`\\b${t}\\b`, 'i').test(lower));
     const acotaPorColaborador = colabMatches.some((m) => String(m[1]) === String(colaboradorID));
-    if (tocaTablasPersonales && !acotaPorColaborador) {
+    if (tocaPersonales && !acotaPorColaborador) {
       throw new Error('Acceso denegado: solo puedes consultar tu propia información personal.');
     }
   }
@@ -105,7 +109,7 @@ export const executeSql = createTool({
     if (!user) {
       throw new Error('Acceso denegado: no hay un contexto de usuario autenticado.');
     }
-    enforceTenantIsolation(trimmed, user.empresaId, user.colaboradorID, user.rol);
+    await enforceTenantIsolation(trimmed, user.empresaId, user.colaboradorID, user.rol);
 
     const finalQuery = ensureLimit(trimmed);
 

@@ -43,10 +43,10 @@ export const mastra = new Mastra({
   // Deployer de Vercel: hace que `mastra build` genere la estructura serverless
   // que Vercel entiende (función + vercel.json). maxDuration alto porque el agente
   // encadena varios pasos de tools (introspección + SQL + redacción).
-  // Región pegada a Turso (us-east-2 / Ohio) para minimizar la latencia del
-  // handshake TCP y evitar el `connect ETIMEDOUT` intermitente. iad1 (Washington
-  // DC, us-east-1) es la región de Vercel más cercana a us-east-2.
-  deployer: new VercelDeployer({ maxDuration: 60, regions: ['iad1'] }),
+  // Región IGUAL a la de Turso (us-east-2 / Ohio): cle1 es Cleveland, us-east-2.
+  // Misma región = mínima latencia de handshake y sin salto entre regiones, para
+  // eliminar el `connect ETIMEDOUT` intermitente al inicializar el storage.
+  deployer: new VercelDeployer({ maxDuration: 60, regions: ['cle1'] }),
   server: {
     /**
      * Middleware que traslada el contexto del usuario desde cabeceras HTTP de

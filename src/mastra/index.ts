@@ -7,6 +7,7 @@ import { VercelDeployer } from '@mastra/deployer-vercel';
 import { MASTRA_RESOURCE_ID_KEY } from '@mastra/core/request-context';
 import { sqlAgent } from './agents/sql-agent';
 import { handleDiagRequest } from './diag-handler';
+import { AGENT_GENERATE_PATH, handleAgentGenerateRequest } from './agent-api-handler';
 import { logger, describeError } from './logger';
 import { libsqlUrl, libsqlAuthToken, validateLibsqlEnv } from './libsql-config';
 import { probeLibsql } from './storage-probe';
@@ -70,13 +71,6 @@ export const mastra = new Mastra({
      * además como resourceId reservado para aislar la memoria por usuario.
      */
     middleware: [
-      // /diag en middleware (no apiRoutes): evita el 500 genérico del router de Mastra.
-      async (c, next) => {
-        if (c.req.path === '/diag' && c.req.method === 'GET') {
-          return handleDiagRequest(c);
-        }
-        await next();
-      },
       async (c, next) => {
         const requestContext = c.get('requestContext');
         if (requestContext) {
@@ -88,11 +82,24 @@ export const mastra = new Mastra({
           if (empresaId) requestContext.set('empresaId', empresaId);
           if (colaboradorID) {
             requestContext.set('colaboradorID', colaboradorID);
-            // Aísla la memoria conversacional por colaborador (precede a valores del cliente).
             requestContext.set(MASTRA_RESOURCE_ID_KEY, colaboradorID);
           }
           if (rol) requestContext.set('rol', rol);
           if (area) requestContext.set('area', area);
+        }
+        await next();
+      },
+      // Rutas custom en middleware: el router apiRoutes de Mastra devuelve 500 opaco.
+      async (c, next) => {
+        const path = c.req.path;
+        if (path === '/diag' && c.req.method === 'GET') {
+          return handleDiagRequest(c);
+        }
+        if (
+          (path === AGENT_GENERATE_PATH || path === '/agents/hr-sql-agent/generate') &&
+          c.req.method === 'POST'
+        ) {
+          return handleAgentGenerateRequest(c);
         }
         await next();
       },

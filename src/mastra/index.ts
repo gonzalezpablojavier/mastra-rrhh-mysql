@@ -2,17 +2,11 @@
 // timeout) antes de que se construya cualquier cliente HTTP (libsql/Turso).
 import './bootstrap';
 import { Mastra } from '@mastra/core/mastra';
-import { registerApiRoute } from '@mastra/core/server';
 import { LibSQLStore } from '@mastra/libsql';
 import { VercelDeployer } from '@mastra/deployer-vercel';
 import { MASTRA_RESOURCE_ID_KEY } from '@mastra/core/request-context';
-import {
-  Observability,
-  MastraStorageExporter,
-  MastraPlatformExporter,
-  SensitiveDataFilter,
-} from '@mastra/observability';
 import { sqlAgent } from './agents/sql-agent';
+import { handleDiagRequest } from './diag-handler';
 import { logger, describeError } from './logger';
 import { libsqlUrl, libsqlAuthToken, validateLibsqlEnv } from './libsql-config';
 import { probeLibsql } from './storage-probe';
@@ -57,6 +51,15 @@ export const mastra = new Mastra({
   deployer: new VercelDeployer({ maxDuration: 60, regions: ['cle1'] }),
   server: {
     /**
+     * Mastra protege /api/* por defecto. Sin provider de auth, las rutas protegidas
+     * devuelven 500 opaco. Hasta integrar JWT del backend, dejamos /api/* público;
+     * el aislamiento real sigue en x-empresa-id / x-colaborador-id.
+     */
+    auth: {
+      public: ['/api/*', '/diag', '/health'],
+      protected: [],
+    },
+    /**
      * Middleware que traslada el contexto del usuario desde cabeceras HTTP de
      * confianza al `RequestContext`. Las tools y las instrucciones del agente lo
      * leen para aplicar el aislamiento multi-empresa de forma determinista, en
@@ -67,6 +70,13 @@ export const mastra = new Mastra({
      * además como resourceId reservado para aislar la memoria por usuario.
      */
     middleware: [
+      // /diag en middleware (no apiRoutes): evita el 500 genérico del router de Mastra.
+      async (c, next) => {
+        if (c.req.path === '/diag' && c.req.method === 'GET') {
+          return handleDiagRequest(c);
+        }
+        await next();
+      },
       async (c, next) => {
         const requestContext = c.get('requestContext');
         if (requestContext) {
@@ -87,75 +97,5 @@ export const mastra = new Mastra({
         await next();
       },
     ],
-    /**
-     * Ruta de diagnóstico TEMPORAL. Ejecuta el agente igual que `/generate` pero
-     * atrapa el error y lo devuelve en la respuesta HTTP en texto plano (sin pasar
-     * por Pino, que trunca los Error a `{}`). Permite ver la causa raíz del 500 con
-     * un solo `curl https://<host>/diag`. Quitar una vez resuelto.
-     */
-    apiRoutes: [
-      registerApiRoute('/diag', {
-        method: 'GET',
-        requiresAuth: false,
-        handler: async (c) => {
-          const pasos: Record<string, unknown> = {};
-          // Todo envuelto en un try externo: cualquier throw se reporta en el body
-          // (200) en vez de caer al manejador genérico de Mastra (500 sin detalle).
-          try {
-            const env = validateLibsqlEnv();
-            pasos.env = env;
-            if (!env.ok) {
-              return c.json({
-                ok: false,
-                pasos,
-                hint: 'Corregí LIBSQL_URL y LIBSQL_AUTH_TOKEN en Vercel → Settings → Environment Variables y redeploy.',
-              });
-            }
-
-            const m = c.get('mastra') as any;
-            pasos.mastra = m ? 'presente' : 'AUSENTE';
-
-            // 1) Storage: forzar init explícito.
-            try {
-              const storage = m?.getStorage?.();
-              pasos.storage = storage ? 'presente' : 'AUSENTE';
-              await storage?.init?.();
-              pasos.storageInit = 'OK';
-            } catch (err) {
-              pasos.storageInit = describeError(err);
-            }
-
-            // 2) Agente — solo si ?agent=1 (para aislar del storage).
-            if (c.req.query('agent') === '1') {
-              try {
-                const agent = m.getAgent('sqlAgent');
-                const res = await agent.generate('Decí "hola" en una palabra.', {
-                  memory: { thread: 'diag-thread', resource: 'diag-user' },
-                });
-                pasos.agentGenerate = 'OK';
-                pasos.text = res.text;
-              } catch (err) {
-                pasos.agentGenerate = describeError(err);
-                pasos.agentStack = (err as Error)?.stack;
-              }
-            }
-
-            return c.json({ ok: true, pasos });
-          } catch (err) {
-            // Captura cualquier cosa que se nos haya escapado.
-            return c.json({ ok: false, pasos, fatal: describeError(err), stack: (err as Error)?.stack });
-          }
-        },
-      }),
-    ],
   },
-  observability: new Observability({
-    configs: {
-      default: {
-        serviceName: 'roma-ia-rrhh',
-        exporters: [new MastraStorageExporter(), new MastraPlatformExporter()],
-        spanOutputProcessors: [new SensitiveDataFilter()],
-      },
-    },
-  }),
 });

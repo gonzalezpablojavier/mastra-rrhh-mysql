@@ -1,5 +1,6 @@
 import { MASTRA_RESOURCE_ID_KEY } from '@mastra/core/request-context';
 import { describeError } from './logger';
+import { requireUserHeaders } from './user-context-http';
 
 /** Ruta oficial documentada en API.md */
 export const AGENT_GENERATE_PATH = '/api/agents/hr-sql-agent/generate';
@@ -27,6 +28,15 @@ type GenerateBody = {
  */
 export async function handleAgentGenerateRequest(c: MastraHttpContext) {
   try {
+    const requestContext = c.get('requestContext') as
+      | { get: (k: string) => unknown; set: (k: string, v: unknown) => void }
+      | undefined;
+
+    const user = requireUserHeaders(requestContext);
+    if (!user.ok) {
+      return c.json({ error: user.error }, 401);
+    }
+
     const body = (await c.req.json()) as GenerateBody;
     if (body.messages == null || body.messages === '') {
       return c.json({ error: 'messages is required' }, 400);
@@ -45,14 +55,12 @@ export async function handleAgentGenerateRequest(c: MastraHttpContext) {
       return c.json({ error: 'Agent sqlAgent not found' }, 500);
     }
 
-    const requestContext = c.get('requestContext') as { get: (k: string) => unknown; set: (k: string, v: unknown) => void } | undefined;
-    const colaboradorID = requestContext?.get('colaboradorID');
     const memory = {
       ...body.memory,
-      ...(colaboradorID ? { resource: String(colaboradorID) } : {}),
+      resource: user.colaboradorID,
     };
-    if (colaboradorID && requestContext) {
-      requestContext.set(MASTRA_RESOURCE_ID_KEY, String(colaboradorID));
+    if (requestContext) {
+      requestContext.set(MASTRA_RESOURCE_ID_KEY, user.colaboradorID);
     }
 
     const result = await agent.generate(body.messages, {

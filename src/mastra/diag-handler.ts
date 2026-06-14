@@ -1,5 +1,6 @@
 import { describeError } from './logger';
 import { validateLibsqlEnv } from './libsql-config';
+import { probeMysql } from './mysql-probe';
 
 /** Contexto Hono con variables de Mastra (tipado mínimo para no depender de hono). */
 type DiagContext = {
@@ -39,6 +40,10 @@ export async function handleDiagRequest(c: DiagContext) {
       pasos.storageInit = 'OK';
     } catch (err) {
       pasos.storageInit = describeError(err);
+    }
+
+    if (c.req.query('mysql') === '1') {
+      pasos.mysql = await probeMysql();
     }
 
     if (c.req.query('agent') === '1') {

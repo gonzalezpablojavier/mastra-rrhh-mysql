@@ -14,8 +14,15 @@ import {
 } from '@mastra/observability';
 import { sqlAgent } from './agents/sql-agent';
 import { logger, describeError } from './logger';
-import { libsqlUrl, libsqlAuthToken } from './libsql-config';
+import { libsqlUrl, libsqlAuthToken, validateLibsqlEnv } from './libsql-config';
 import { probeLibsql } from './storage-probe';
+
+const libsqlEnv = validateLibsqlEnv();
+if (!libsqlEnv.ok) {
+  for (const issue of libsqlEnv.issues) {
+    logger.error(`[libsql-config] ${issue}`);
+  }
+}
 
 // Handlers globales: el init del storage de Mastra lanza un unhandledRejection
 // que mata el proceso con exit 128 (antes de que cualquier log async salga).
@@ -89,11 +96,22 @@ export const mastra = new Mastra({
     apiRoutes: [
       registerApiRoute('/diag', {
         method: 'GET',
+        requiresAuth: false,
         handler: async (c) => {
           const pasos: Record<string, unknown> = {};
           // Todo envuelto en un try externo: cualquier throw se reporta en el body
           // (200) en vez de caer al manejador genérico de Mastra (500 sin detalle).
           try {
+            const env = validateLibsqlEnv();
+            pasos.env = env;
+            if (!env.ok) {
+              return c.json({
+                ok: false,
+                pasos,
+                hint: 'Corregí LIBSQL_URL y LIBSQL_AUTH_TOKEN en Vercel → Settings → Environment Variables y redeploy.',
+              });
+            }
+
             const m = c.get('mastra') as any;
             pasos.mastra = m ? 'presente' : 'AUSENTE';
 
